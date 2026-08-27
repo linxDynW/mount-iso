@@ -1,9 +1,7 @@
 name: Mount ISO
-description: >
-  Mounts an ISO image to a drive letter and/or folder mount point,
-  failure-proof - or unmounts a previously mounted one. Identifies by
-  the symbolic link to the device instead of flaky CIM pipeline 
-  bindings, deterministic and race-free.
+description: >-
+  Mount and unmount ISO images to a drive letter or folder on Windows,
+  reliable and race-free.
 
 inputs:
   action:
