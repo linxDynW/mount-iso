@@ -7,9 +7,7 @@ description: >
 
 inputs:
   action:
-    description: >
-      What to do: "mount" (default) or "unmount".
-      - unmounting something that is not mounted succeeds silently.
+    description: 'What to do: "mount" (default) or "unmount". Unmount is idempotent'
     required: false
     default: mount
   image-path:

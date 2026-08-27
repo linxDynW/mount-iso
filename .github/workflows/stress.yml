@@ -143,3 +143,40 @@ jobs:
           }
           Write-Host "folder stress: success=$ok failed=$fail"
           if ($fail -gt 0) { exit 1 }
+
+  # verify the published action works via a real `uses:` reference
+  # (the same syntax users will write), not just the local ./ path
+  selftest:
+    name: selftest (uses linxDynW/mount-iso@v1)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mount via published reference
+        id: mount
+        uses: linxDynW/mount-iso@v1
+        with:
+          image-path: ${{ github.workspace }}\tests\test.iso
+          letter: W
+          verify-path: hello.txt
+
+      - name: Verify content
+        shell: pwsh
+        run: |
+          $c = (Get-Content W:\hello.txt -Raw).Trim()
+          if ($c -ne 'mount-iso stress test') { throw "content mismatch: $c" }
+          if ("${{ steps.mount.outputs.letter }}" -ne 'W') { throw "letter output mismatch" }
+          Write-Host "published action mount OK"
+
+      - name: Unmount via published reference
+        uses: linxDynW/mount-iso@v1
+        with:
+          action: unmount
+          image-path: ${{ github.workspace }}\tests\test.iso
+          letter: W
+
+      - name: Verify unmounted
+        shell: pwsh
+        run: |
+          if (Get-Volume -DriveLetter W -ErrorAction SilentlyContinue) { throw "W still mounted" }
+          Write-Host "published action unmount OK"
