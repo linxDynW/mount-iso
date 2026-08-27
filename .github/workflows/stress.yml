@@ -1,0 +1,145 @@
+name: stress
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    # nightly soak: catches flaky mounts introduced by runner image updates
+    - cron: '0 4 * * *'
+
+jobs:
+  stress:
+    name: mount stress (${{ matrix.iterations }}x)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        iterations: [50, 100]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Smoke test (action path)
+        uses: ./
+        with:
+          image-path: ${{ github.workspace }}\tests\test.iso
+          letter: W
+          verify-path: hello.txt
+
+      - name: Content check
+        shell: pwsh
+        run: |
+          $c = (Get-Content W:\hello.txt -Raw).Trim()
+          if ($c -ne 'mount-iso stress test') { throw "content mismatch: $c" }
+          Write-Host "content OK"
+
+      - name: Cleanup smoke mount
+        shell: pwsh
+        run: |
+          . "${{ github.workspace }}\scripts\mount-iso-lib.ps1"
+          # best-effort: if the smoke failed, there may be nothing mounted
+          try { Dismount-IsoImage -ImagePath "${{ github.workspace }}\tests\test.iso" -Letter W } catch {
+            Write-Host "warning: smoke cleanup: $_"
+          }
+
+      - name: Stress loop (${{ matrix.iterations }}x)
+        shell: pwsh
+        run: |
+          pwsh "${{ github.workspace }}\tests\stress.ps1" `
+            -Iterations ${{ matrix.iterations }} `
+            -Iso "${{ github.workspace }}\tests\test.iso" `
+            -Letter W
+
+  # three independent mount-iso invocations at once (equivalent to three
+  # parallel `uses` steps), each looping on its own letter + ISO copy
+  concurrent:
+    name: concurrent stress (3x${{ matrix.iterations }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        iterations: [50, 100]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Concurrent stress (3 workers x ${{ matrix.iterations }})
+        shell: pwsh
+        run: |
+          pwsh "${{ github.workspace }}\tests\stress-concurrent.ps1" `
+            -Iterations ${{ matrix.iterations }} `
+            -IsoPath "${{ github.workspace }}\tests\test.iso"
+
+  # folder mount point mode: mount to an NTFS dir, verify content,
+  # then verify the dir is empty again after dismount
+  folder:
+    name: folder mount stress (${{ matrix.iterations }}x)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        iterations: [10, 30]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Smoke test (folder mode, action path)
+        id: smoke
+        uses: ./
+        with:
+          image-path: ${{ github.workspace }}\tests\test.iso
+          mount-point: ${{ runner.temp }}\iso-mount
+          verify-path: hello.txt
+
+      - name: Content + outputs check
+        shell: pwsh
+        run: |
+          $c = (Get-Content "${{ runner.temp }}\iso-mount\hello.txt" -Raw).Trim()
+          if ($c -ne 'mount-iso stress test') { throw "content mismatch: $c" }
+          Write-Host "folder content OK"
+          # mount-point-only: no letter was requested, so no letter output
+          if ("${{ steps.smoke.outputs.letter }}" -ne '') {
+            throw "letter output should be empty for mount-point-only, got [${{ steps.smoke.outputs.letter }}]"
+          }
+          if ("${{ steps.smoke.outputs.mount-point }}" -ne "${{ runner.temp }}\iso-mount") {
+            throw "mount-point output mismatch"
+          }
+          Write-Host "outputs OK (letter empty, mount-point set)"
+
+      - name: Cleanup smoke mount
+        shell: pwsh
+        run: |
+          . "${{ github.workspace }}\scripts\mount-iso-lib.ps1"
+          try {
+            Dismount-IsoImage -ImagePath "${{ github.workspace }}\tests\test.iso" `
+              -Letter W -MountPoint "${{ runner.temp }}\iso-mount"
+          } catch { Write-Host "warning: smoke cleanup: $_" }
+
+      - name: Folder stress loop (${{ matrix.iterations }}x)
+        shell: pwsh
+        run: |
+          . "${{ github.workspace }}\scripts\mount-iso-lib.ps1"
+          $iso = "${{ github.workspace }}\tests\test.iso"
+          $dir = "${{ runner.temp }}\iso-mount-loop"
+          $ok = 0; $fail = 0
+          for ($i = 1; $i -le ${{ matrix.iterations }}; $i++) {
+            try {
+              if ((Get-ChildItem $dir -Force -ErrorAction SilentlyContinue).Count -ne 0) {
+                throw "precondition: $dir not empty (leak?)"
+              }
+              Mount-IsoImage -ImagePath $iso -Letter W -MountPoint $dir -VerifyPath 'hello.txt'
+              $c = (Get-Content (Join-Path $dir 'hello.txt') -Raw).Trim()
+              if ($c -ne 'mount-iso stress test') { throw "content mismatch: $c" }
+              Dismount-IsoImage -ImagePath $iso -Letter W -MountPoint $dir
+              if ((Get-ChildItem $dir -Force -ErrorAction SilentlyContinue).Count -ne 0) {
+                throw "dir not empty after dismount"
+              }
+              $ok++
+              Write-Host "[$i/${{ matrix.iterations }}] OK"
+            } catch {
+              $fail++
+              Write-Host "::error::iteration $i FAILED: $_"
+              try { mountvol W: /D 2>$null; mountvol $dir /D 2>$null } catch {}
+              try { Dismount-DiskImage -ImagePath $iso -ErrorAction SilentlyContinue | Out-Null } catch {}
+            }
+          }
+          Write-Host "folder stress: success=$ok failed=$fail"
+          if ($fail -gt 0) { exit 1 }

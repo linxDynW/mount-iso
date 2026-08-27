@@ -1,0 +1,60 @@
+name: Mount ISO
+description: >
+  Mounts an ISO image to a drive letter and/or folder mount point,
+  failure-proof - or unmounts a previously mounted one. Identifies by
+  the symbolic link to the device instead of flaky CIM pipeline 
+  bindings, deterministic and race-free.
+
+inputs:
+  action:
+    description: >
+      What to do: "mount" (default) or "unmount".
+      - unmounting something that is not mounted succeeds silently.
+    required: false
+    default: mount
+  image-path:
+    description: "Path to the ISO file"
+    required: true
+  letter:
+    description: >
+      Drive letter to mount to / unmount from. Give this and/or
+      mount-point.
+    required: false
+    default: ""
+  mount-point:
+    description: >
+      Optional NTFS folder to mount to / unmount from, in addition to
+      the letter if given (e.g. "C:\iso-mount"). For mount: created
+      automatically if missing, must be empty before mounting. For
+      unmount: the folder must become empty again.
+    required: false
+    default: ""
+  verify-path:
+    description: >
+      Mount only: optional path (relative to the mount root) that must
+      exist after mounting, e.g. "LaunchBuildEnv.cmd". Empty = skip
+      content check (volume presence is still verified).
+    required: false
+    default: ""
+
+outputs:
+  letter:
+    description: "The drive letter the ISO was mounted to"
+    value: ${{ steps.mount.outputs.letter }}
+  mount-point:
+    description: "The folder the ISO was mounted to (when mount-point is set)"
+    value: ${{ steps.mount.outputs.mount-point }}
+
+runs:
+  using: composite
+  steps:
+    - name: Mount/Unmount ISO
+      id: mount
+      shell: pwsh
+      run: |
+        pwsh "${{ github.action_path }}/scripts/mount-iso.ps1" `
+          -Action "${{ inputs.action }}" `
+          -ImagePath "${{ inputs.image-path }}" `
+          -Letter "${{ inputs.letter }}" `
+          -MountPoint "${{ inputs.mount-point }}" `
+          -VerifyPath "${{ inputs.verify-path }}"
