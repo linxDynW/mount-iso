@@ -2,6 +2,9 @@ name: Mount ISO
 description: >-
   Mount and unmount ISO images to a drive letter or folder on Windows,
   reliable and race-free.
+branding:
+  icon: 'hard-drive'
+  color: 'blue'
 
 inputs:
   action:
