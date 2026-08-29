@@ -35,10 +35,15 @@ public static class DosDevice {
 
 function Resolve-IsoVolumeUid {
     param([string]$DevicePath)
-    $deviceTarget = [DosDevice]::Target(($DevicePath -split '\\')[-1])
-    if (-not $deviceTarget) { throw "no device target for $DevicePath" }
-    for ($i = 0; $i -lt 30; $i++) {
+    $deviceName = ($DevicePath -split '\\')[-1]
+    # The device path from Mount-DiskImage is optimistic: the device
+    # may not be registered in the DOS namespace yet, and the volume
+    # symlink appears asynchronously after it. Poll both - they can
+    # lag by a variable amount under load.
+    for ($i = 0; $i -lt 150; $i++) {
         Start-Sleep -Milliseconds 200
+        $deviceTarget = [DosDevice]::Target($deviceName)
+        if (-not $deviceTarget) { continue }
         foreach ($name in [DosDevice]::EnumAll()) {
             if ($name -notlike 'Volume{*') { continue }
             if ([DosDevice]::Target($name) -eq $deviceTarget) {
@@ -46,7 +51,7 @@ function Resolve-IsoVolumeUid {
             }
         }
     }
-    throw "no volume symlink maps to $deviceTarget"
+    throw "no volume symlink maps to device $DevicePath (waited 30s)"
 }
 
 function Mount-IsoImage {
